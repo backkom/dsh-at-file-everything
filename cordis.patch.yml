@@ -1,0 +1,25 @@
+# Bundle patch layer for dsh-at-file-everything.
+#
+# The row loads this package's main entry as the host half (a Cordis plugin that
+# provides `ctx.fileReferences` from the Everything index).
+#
+# `file-reference-local` is disabled rather than left mounted: Cordis refuses two
+# providers of one service name in a scope, and the shipped provider would
+# otherwise win or lose the registration by load order. Disabling it here keeps
+# exactly one owner of the seam. Re-enable that row (or remove this patch layer)
+# to go back to the upstream walk-based provider.
+#
+# ORDERING MATTERS: this patch can only disable a row that an earlier bundle
+# layer already declared. `dsh-at-file-everything` must therefore appear *after*
+# the bundle that mounts `file-reference-local` (in the shipped composition,
+# `@deepseek-ai/dsh-web-app`) in `package.json`'s `dsh.profile.bundles` list.
+# `dsh plugin add` appends at the end, which satisfies this by default. If the
+# row cannot be found, the Loader reports
+# `patch: entry "file-reference-local" not found` — move this bundle later in
+# the list.
+- insert:
+    - id: file-reference-everything
+      name: dsh-at-file-everything
+
+- id: file-reference-local
+  disabled: true

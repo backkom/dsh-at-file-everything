@@ -1,0 +1,73 @@
+{
+  "name": "dsh-at-file-everything",
+  "version": "0.1.0",
+  "description": "Everything-backed @file completion for DeepSeek Harness on Windows: instant path search through es.exe, with the agent workspace as the ranking root",
+  "license": "MIT",
+  "author": "leaf",
+  "type": "module",
+  "os": [
+    "win32"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./pure": {
+      "default": "./lib/pure.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "dsh.plugin.json",
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "everything",
+    "es.exe",
+    "file-reference",
+    "autocomplete",
+    "windows"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/*.test.js\"",
+    "check": "npm run typecheck && npm run build && npm run test",
+    "prepack": "npm run check"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-file-reference": ">=0.1.5-rc.3",
+    "@deepseek-ai/schemastery": "^3.18.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "directory": "packages/context/file-reference-everything"
+  },
+  "homepage": "https://github.com/deepseek-ai/deepseek-harness/tree/main/packages/context/file-reference-everything",
+  "bugs": {
+    "url": "https://github.com/deepseek-ai/deepseek-harness/issues"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.0"
+  }
+}
