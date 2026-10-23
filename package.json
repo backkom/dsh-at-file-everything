@@ -58,12 +58,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
-    "directory": "packages/context/file-reference-everything"
+    "url": "git+https://github.com/backkom/dsh-at-file-everything.git"
   },
-  "homepage": "https://github.com/deepseek-ai/deepseek-harness/tree/main/packages/context/file-reference-everything",
+  "homepage": "https://github.com/backkom/dsh-at-file-everything",
   "bugs": {
-    "url": "https://github.com/deepseek-ai/deepseek-harness/issues"
+    "url": "https://github.com/backkom/dsh-at-file-everything/issues"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
