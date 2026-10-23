@@ -1,0 +1,55 @@
+Icon: Everything application icon
+Source repository: https://github.com/backkom/dsh-at-file-everything
+Asset files: assets/icon-180.png, assets/icon-256.png, assets/icon-512.png
+
+--------------------------------------------------------------------------
+Upstream
+--------------------------------------------------------------------------
+
+The icon is voidtools' "Everything" application icon (a magnifying glass).
+The 256x256 copy used as the source was extracted from the Everything
+application binaries (version 1.4.1.1026) and is distributed at
+
+    https://commons.wikimedia.org/wiki/File:Everything_(software)_icon.png
+
+Author / copyright holder: David Carpenter (voidtools), developer of
+"Everything".
+
+--------------------------------------------------------------------------
+Licence
+--------------------------------------------------------------------------
+
+Everything, including this icon, is licensed under the MIT licence. The
+permission notice shipped with the application (License.txt in the
+Everything install directory, and https://www.voidtools.com/License.txt)
+reads:
+
+    Everything
+
+    Copyright (c) 2022 voidtools
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the
+    "Software"), to deal in the Software without restriction, including
+    without limitation the rights to use, copy, modify, merge, publish,
+    distribute, sublicense, and/or sell copies of the Software, and to
+    permit persons to whom the Software is furnished to do so, subject to
+    the following conditions:
+
+    The above copyright notice and this permission notice shall be included
+    in all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+    IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+    TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+    SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+That notice is reproduced here to satisfy its one condition. The resized
+derivatives were produced by scripts/make-icon.py.
+
+"Everything" is voidtools' product name. This icon is used descriptively, to
+identify that this plugin answers file completion from the Everything index;
+this plugin is not affiliated with or endorsed by voidtools.

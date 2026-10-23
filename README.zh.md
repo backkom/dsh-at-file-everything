@@ -166,9 +166,31 @@ src/es-client.ts  es.exe 适配层：spawn、导出、解码、超时
 src/candidates.ts 纯排序与路径归一
 src/pure.ts       不含 Harness 依赖的入口，供测试与复用
 cordis.patch.yml  打包层：插入本行，禁用 file-reference-local
+assets/           市场图标及其许可记录
+scripts/make-icon.py  由 icon-256.png 渲染 assets/icon-{180,256,512}.png
 ```
 
 `@deepseek-ai/*` 在打包时保持 external：由宿主从安装目录解析；若内联，本插件会得到第二份 Cordis `Service` 类身份。
+
+## 图标
+
+`assets/icon-{180,256,512}.png` 用的是 voidtools「Everything」的放大镜图标。
+Everything（含图标）以 MIT 授权发布（Copyright (c) 2022 voidtools），因此复用
+是允许的，唯一条件是许可声明随资产一起分发——声明在
+[assets/ICON-LICENSE.txt](assets/ICON-LICENSE.txt)。重新渲染各尺寸：
+
+```powershell
+python scripts/make-icon.py
+```
+
+市场（awesome-dsh-plugin 列表、dsh-market）从目录条目里取图：
+
+```yaml
+icon: https://raw.githubusercontent.com/backkom/dsh-at-file-everything/master/assets/icon-180.png
+```
+
+该列表只接受托管在 GitHub 的 `png`/`jpg`/`jpeg`/`webp`，卡片按约 96px 显示，
+所以方形位图最合适。本仓库默认分支是 `master`；若日后改名，这个 URL 要同步改。
 
 ## 已知限制
 

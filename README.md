@@ -173,9 +173,33 @@ src/es-client.ts  es.exe adapter: spawn, export, decode, timeouts
 src/candidates.ts pure ranking and path normalisation
 src/pure.ts       Harness-free entry for tests and reuse
 cordis.patch.yml  bundle layer: insert this row, disable file-reference-local
+assets/           storefront icon and its licence record
+scripts/make-icon.py  renders assets/icon-{180,256,512}.png from icon-256.png
 ```
 
 `@deepseek-ai/*` imports stay external in the bundle: the host resolves those from the installation, and inlining them would give this plugin a second Cordis `Service` class identity.
+
+## Icon
+
+`assets/icon-{180,256,512}.png` is voidtools' Everything magnifying-glass icon.
+Everything — icon included — is MIT-licensed (Copyright (c) 2022 voidtools), so
+reuse is permitted as long as the notice travels with the asset; it does, in
+[assets/ICON-LICENSE.txt](assets/ICON-LICENSE.txt). Re-render the sizes with:
+
+```powershell
+python scripts/make-icon.py
+```
+
+Storefronts (the awesome-dsh-plugin list, dsh-market) pick it up from the
+catalog entry:
+
+```yaml
+icon: https://raw.githubusercontent.com/backkom/dsh-at-file-everything/master/assets/icon-180.png
+```
+
+That list only accepts icons hosted on GitHub as `png`/`jpg`/`jpeg`/`webp`, and
+draws the tile at ~96px, so a square raster is the shape that works. The default
+branch here is `master`; if it is ever renamed, that URL has to change with it.
 
 ## Limitations
 
