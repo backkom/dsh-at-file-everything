@@ -1,6 +1,6 @@
 {
   "name": "dsh-at-file-everything",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Everything-backed @file completion for DeepSeek Harness on Windows: instant path search through es.exe, with the agent workspace as the ranking root",
   "license": "MIT",
   "author": "leaf",
