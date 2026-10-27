@@ -71,7 +71,10 @@
     "test": "node --test \"test/*.test.js\"",
     "check": "npm run typecheck && npm run build && npm run test",
     "verify:activate": "node scripts/verify-activation.mjs",
-    "prepack": "npm run check"
+    "prepack": "npm run check",
+    "login": "npm login --registry https://registry.npmjs.org/",
+    "release": "npm publish --registry https://registry.npmjs.org/",
+    "release:dry": "npm publish --registry https://registry.npmjs.org/ --dry-run"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.2 <4.0.5-0 || >=4.0.5-alpha.1 <4.1.0-0 || >=4.1.0-rc.1 <5.0.0-0",
