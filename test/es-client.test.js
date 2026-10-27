@@ -14,14 +14,36 @@ import { describe, it } from 'node:test'
 import { contiguousTerm, escapeRegex, escapeTerm, parseCsv, subsequenceTerm } from '../lib/pure.js'
 
 describe('parseCsv', () => {
-  it('skips the BOM and the header row', () => {
-    const text = '\uFEFFAttributes,Filename\r\nA,"C:\\w\\a.ts"\r\n'
+  it('reads columns by the header, not by position', () => {
+    // ES 1.1.0.34 writes Filename first; the argument order suggests otherwise.
+    // A positional reader swaps every path for an attribute string.
+    const text = '\uFEFFFilename,Attributes\r\n"C:\\w\\a.ts",32\r\n'
     assert.deepEqual(parseCsv(text), [{ path: 'C:\\w\\a.ts', directory: false }])
   })
 
-  it('classifies a D attribute as a directory', () => {
-    const text = 'Attributes,Filename\r\nD,"C:\\w\\src"\r\n'
-    assert.deepEqual(parseCsv(text), [{ path: 'C:\\w\\src', directory: true }])
+  it('accepts the reverse column order too, so a version change cannot swap it', () => {
+    const text = 'Attributes,Filename\r\nA,"C:\\w\\a.ts"\r\n'
+    assert.deepEqual(parseCsv(text), [{ path: 'C:\\w\\a.ts', directory: false }])
+  })
+
+  it('classifies a directory from the real decimal attribute value', () => {
+    // `-attributes` writes the raw FILE_ATTRIBUTE bitmask (16 = DIRECTORY,
+    // 32 = ARCHIVE), not the `D` letter the docs show. A letter test classifies
+    // every row as a file.
+    assert.equal(parseCsv('Filename,Attributes\r\n"C:\\w\\src",16\r\n')[0]?.directory, true)
+    assert.equal(parseCsv('Filename,Attributes\r\n"C:\\w\\a.ts",32\r\n')[0]?.directory, false)
+  })
+
+  it('classifies a directory with extra bits set', () => {
+    // 16 | 2 (hidden) = 18; 16 | 4 (system) = 20.
+    assert.equal(parseCsv('Filename,Attributes\r\n"C:\\w\\src",18\r\n')[0]?.directory, true)
+    assert.equal(parseCsv('Filename,Attributes\r\n"C:\\w\\src",20\r\n')[0]?.directory, true)
+  })
+
+  it('does not read the DIRECTORY bit out of an unrelated number', () => {
+    // 1 (readonly) has bit 0x10 clear; 32 must not be mistaken for a directory.
+    assert.equal(parseCsv('Filename,Attributes\r\n"C:\\w\\a.ts",1\r\n')[0]?.directory, false)
+    assert.equal(parseCsv('Filename,Attributes\r\n"C:\\w\\a.ts",32\r\n')[0]?.directory, false)
   })
 
   it('classifies a compound attribute containing D as a directory', () => {
@@ -30,17 +52,17 @@ describe('parseCsv', () => {
   })
 
   it('keeps paths containing commas', () => {
-    const text = 'Attributes,Filename\r\nA,"C:\\w\\a, b.txt"\r\n'
+    const text = 'Filename,Attributes\r\n"C:\\w\\a, b.txt",32\r\n'
     assert.equal(parseCsv(text)[0]?.path, 'C:\\w\\a, b.txt')
   })
 
   it('unescapes doubled quotes in a path', () => {
-    const text = 'Attributes,Filename\r\nA,"C:\\w\\say ""hi"".txt"\r\n'
+    const text = 'Filename,Attributes\r\n"C:\\w\\say ""hi"".txt",32\r\n'
     assert.equal(parseCsv(text)[0]?.path, 'C:\\w\\say "hi".txt')
   })
 
   it('keeps non-ASCII paths intact', () => {
-    const text = '\uFEFFAttributes,Filename\r\nA,"C:\\w\\中文测试文件.txt"\r\nA,"C:\\w\\日本語.md"\r\n'
+    const text = '\uFEFFFilename,Attributes\r\n"C:\\w\\中文测试文件.txt",32\r\n"C:\\w\\日本語.md",32\r\n'
     assert.deepEqual(
       parseCsv(text).map((entry) => entry.path),
       ['C:\\w\\中文测试文件.txt', 'C:\\w\\日本語.md'],
@@ -49,11 +71,15 @@ describe('parseCsv', () => {
 
   it('answers an empty list for an empty export', () => {
     assert.deepEqual(parseCsv(''), [])
-    assert.deepEqual(parseCsv('Attributes,Filename\r\n'), [])
+    assert.deepEqual(parseCsv('Filename,Attributes\r\n'), [])
+  })
+
+  it('treats a missing Attributes column as "no directory information"', () => {
+    assert.deepEqual(parseCsv('Filename\r\n"C:\\w\\a.ts"\r\n'), [{ path: 'C:\\w\\a.ts', directory: false }])
   })
 
   it('skips a line with unbalanced quoting instead of throwing', () => {
-    const text = 'Attributes,Filename\r\nA,"C:\\w\\unterminated\r\nA,"C:\\w\\ok.ts"\r\n'
+    const text = 'Filename,Attributes\r\n"C:\\w\\unterminated\r\n"C:\\w\\ok.ts",32\r\n'
     assert.deepEqual(
       parseCsv(text).map((entry) => entry.path),
       ['C:\\w\\ok.ts'],

@@ -1,7 +1,7 @@
 {
   "name": "dsh-at-file-everything",
   "description": "Everything-backed @file completion for DeepSeek Harness on Windows",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "entry": {
     "name": "dsh-at-file-everything",
     "inject": ["agents", "workingDirectory"]

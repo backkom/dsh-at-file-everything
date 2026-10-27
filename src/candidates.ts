@@ -132,15 +132,67 @@ export function relativeToRoot(root: string, absolute: string): string | undefin
 }
 
 /**
- * Drop rows living under an excluded directory basename.
+ * Decide whether one folder name matches an exclusion pattern.
+ *
+ * The card accepts `Library` and `Lib*` alike, so the comparison has to
+ * understand wildcards. Only `*` and `?` are meaningful — the same two Everything
+ * honours — and everything else is literal. The match is case-insensitive because
+ * Windows folder names are.
+ *
+ * @param segment - one path segment.
+ * @param patterns - lower-cased patterns, possibly containing `*` and `?`.
+ * @returns whether the segment is excluded.
+ */
+export function matchesExcluded(segment: string, patterns: ReadonlySet<string>): boolean {
+  if (patterns.size === 0) return false
+  const name = segment.toLowerCase()
+  // A plain name is the common case and costs no regular expression.
+  if (patterns.has(name)) return true
+  for (const pattern of patterns) {
+    if (!pattern.includes('*') && !pattern.includes('?')) continue
+    if (wildcardMatches(name, pattern)) return true
+  }
+  return false
+}
+
+/**
+ * Match one name against a `*`/`?` pattern.
+ *
+ * Implemented as an anchored regular expression over an escaped literal, so a
+ * pattern can never be read as a regex by accident — a folder named `a+b` must
+ * match `a+b`, not `aab`.
+ *
+ * @param name - lower-cased candidate name.
+ * @param pattern - lower-cased pattern.
+ * @returns whether the pattern matches the whole name.
+ */
+function wildcardMatches(name: string, pattern: string): boolean {
+  const source = pattern
+    .split('')
+    .map((character) => {
+      if (character === '*') return '.*'
+      if (character === '?') return '.'
+      return character.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    })
+    .join('')
+  try {
+    return new RegExp(`^${source}$`).test(name)
+  } catch {
+    // An unusable pattern must not fail a keystroke; treat it as no match.
+    return false
+  }
+}
+
+/**
+ * Drop rows living under an excluded folder.
  *
  * The shipped provider skips excluded trees while walking; Everything's index
  * already contains them, so exclusion becomes a filter over the rows that were
- * actually returned. The entry's own segment is only checked for directories: a
- * *file* named `build` is not an excluded directory.
+ * actually returned. The entry's own segment is only checked for folders: a
+ * *file* named `build` is not an excluded folder.
  *
  * @param rows - root-relative rows.
- * @param excluded - lower-cased directory basenames to drop.
+ * @param excluded - lower-cased folder patterns to drop.
  * @returns rows whose every directory segment is retained.
  */
 export function filterExcluded(rows: readonly RawCandidate[], excluded: ReadonlySet<string>): RawCandidate[] {
@@ -148,7 +200,7 @@ export function filterExcluded(rows: readonly RawCandidate[], excluded: Readonly
   return rows.filter((row) => {
     const segments = row.path.split('/')
     const directories = row.kind === 'directory' ? segments : segments.slice(0, -1)
-    return !directories.some((segment) => excluded.has(segment.toLowerCase()))
+    return !directories.some((segment) => matchesExcluded(segment, excluded))
   })
 }
 

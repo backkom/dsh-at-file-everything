@@ -27,7 +27,16 @@ import type { Agent, Context } from '@deepseek-ai/cordis'
 import FileReferenceService, { FILE_REFERENCE_PROMPT } from '@deepseek-ai/dsh-file-reference'
 import z, { type Schema } from '@deepseek-ai/schemastery'
 
-import { EsClient, contiguousTerm, subsequenceTerm, type EsFailure, type EsRow } from './es-client.js'
+import {
+  EsClient,
+  contiguousTerm,
+  folderExclusionTerms,
+  fileExclusionTerms,
+  listingTerm,
+  subsequenceTerm,
+  type EsFailure,
+  type EsRow,
+} from './es-client.js'
 import {
   basenameOf,
   filterExcluded,
@@ -38,6 +47,16 @@ import {
   type Candidate,
   type RawCandidate,
 } from './candidates.js'
+import { resolveEsCommands } from './resolve.js'
+import { STATUS_ROUTE, esStatus, esVersion, statusBody } from './status.js'
+import { buildFindFilesTool, makeFindFilesHost, FILE_SEARCH_PROMPT } from './tool.js'
+import {
+  DEFAULT_CONFIG,
+  DEFAULT_EXCLUDED_DIRECTORIES,
+  currentValue,
+  normalizeConfig,
+  type Config as ConfigShape,
+} from './config.js'
 
 // The pure helpers are re-exported from the package root as well, so a consumer
 // that already resolves the plugin can reach them without a second specifier.
@@ -49,10 +68,16 @@ export {
   relativeToRoot,
   toWindowsPath,
 } from './candidates.js'
-export { contiguousTerm, parseCsv, subsequenceTerm } from './es-client.js'
+export { contiguousTerm, folderExclusionTerms, fileExclusionTerms, listingTerm, parseCsv, subsequenceTerm } from './es-client.js'
+export { bundledEsCommand, resolveEsCommands } from './resolve.js'
+export { STATUS_ROUTE, esStatus, esVersion, statusBody } from './status.js'
+export { buildFindFilesTool, failureToError, renderFindFiles, TOOL_NAME, FILE_SEARCH_PROMPT } from './tool.js'
 
 export type { Candidate, RawCandidate } from './candidates.js'
 export type { EsFailure, EsRow } from './es-client.js'
+export type { EsCandidate, EsSource } from './resolve.js'
+export type { EsStatus, EsStatusEntry } from './status.js'
+export type { FindFilesResult, FindFilesHost, FoundEntry } from './tool.js'
 
 /** Cordis plugin name; also the loader entry id. */
 export const name = 'dsh-at-file-everything'
@@ -66,82 +91,27 @@ export const name = 'dsh-at-file-everything'
 export const inject = ['agents', 'workingDirectory']
 
 /**
- * Directory basenames dropped from candidates.
+ * Configuration schema with defaults; the Loader applies it at load time.
  *
- * These are the shipped provider's defaults plus the trees that motivated this
- * plugin. `lib` stays out on purpose, exactly as upstream: many ecosystems keep
- * real sources there.
+ * Every field is `volatile`. The Harness serves settings forms only for
+ * `volatile` fields, so a plain field would leave this plugin with no
+ * configuration surface at all — and a volatile field is also the one that can
+ * change without remounting the plugin, which is what makes the exclusion lists
+ * editable from the Plugins page while `@` keeps working.
  */
-export const DEFAULT_EXCLUDED_DIRECTORIES = [
-  '.git',
-  '.svn',
-  'node_modules',
-  'dist',
-  'build',
-  'out',
-  'coverage',
-  'target',
-  '.next',
-  '.nuxt',
-  '.turbo',
-  '.venv',
-  '__pycache__',
-  '.pytest_cache',
-  '.mypy_cache',
-  '.gradle',
-]
-
-/** Plugin configuration, validated by the Loader at load time. */
-export interface Config {
-  /**
-   * Path or bare name of the Everything command-line client. A bare name such
-   * as `es.exe` is resolved through `PATH` by Windows.
-   */
-  esCommand: string
-  /** Maximum ranked candidates returned for one query. */
-  maxResults: number
-  /** Rows requested from Everything before ranking. */
-  maxCandidates: number
-  /** Deadline for one `es.exe` invocation in milliseconds. */
-  timeoutMs: number
-  /** Directory basenames dropped from candidates. */
-  excludedDirectories: string[]
-  /**
-   * Allow a fuzzy subsequence search when a query has no contiguous match.
-   *
-   * Everything answers the wildcard subsequence form from its index in
-   * ~90–150 ms, so this is on by default; it stays a switch because a
-   * deployment that prefers never widening a query can turn it off.
-   */
-  fuzzyFallback: boolean
-  /**
-   * Directories prepended to the child `PATH` when `esCommand` is a bare name.
-   * The default installer location is searched automatically when it is on
-   * `PATH`; this covers portable and per-user installations elsewhere.
-   */
-  extraPathDirectories: string[]
-  /**
-   * Install the model-facing `@path` guidance section.
-   *
-   * The section is the seam's stable `FILE_REFERENCE_PROMPT`; it is installed
-   * only when the addressed agent can actually call `read`, matching the
-   * shipped provider, so a session without filesystem tools is not told about
-   * paths it cannot open.
-   */
-  installPrompt: boolean
-}
-
-/** Configuration schema with defaults; the Loader applies it at load time. */
-export const Config: Schema<Config> = z.object({
-  esCommand: z.string().default('es.exe'),
-  maxResults: z.number().step(1).min(1).default(20),
-  maxCandidates: z.number().step(1).min(1).default(300),
-  timeoutMs: z.number().step(1).min(1).default(3000),
-  excludedDirectories: z.array(z.string()).default([...DEFAULT_EXCLUDED_DIRECTORIES]),
-  fuzzyFallback: z.boolean().default(true),
-  extraPathDirectories: z.array(z.string()).default([]),
-  installPrompt: z.boolean().default(true),
-}) as Schema<Config>
+export const Config: Schema<ConfigShape> = z.object({
+  esCommand: z.string().default('es.exe').volatile(),
+  maxResults: z.number().step(1).min(1).default(20).volatile(),
+  maxCandidates: z.number().step(1).min(1).default(300).volatile(),
+  timeoutMs: z.number().step(1).min(1).default(10000).volatile(),
+  deadlineMs: z.number().step(1).min(1).default(25000).volatile(),
+  excludedDirectories: z.array(z.string()).default([...DEFAULT_EXCLUDED_DIRECTORIES]).volatile(),
+  excludeInQuery: z.array(z.string()).default([]).volatile(),
+  excludeFilePatterns: z.array(z.string()).default([]).volatile(),
+  fuzzyFallback: z.boolean().default(true).volatile(),
+  extraPathDirectories: z.array(z.string()).default([]).volatile(),
+  installPrompt: z.boolean().default(true).volatile(),
+}) as Schema<ConfigShape>
 
 /** Per-agent query state, discarded when the plugin unloads. */
 interface AgentState {
@@ -159,32 +129,51 @@ interface AgentState {
  * composition.
  */
 export class EverythingFileReferenceService extends FileReferenceService {
-  private readonly settings: Config
-  private readonly excluded: Set<string>
+  /**
+   * Live configuration.
+   *
+   * Read through {@link current} rather than snapshotted, because the fields are
+   * `volatile`: the Loader hands over a live handle whose `.get()` is the value
+   * in effect, and that is what makes an edit on the browser card apply without
+   * remounting the plugin. A snapshot taken in the constructor would pin the
+   * first value forever.
+   */
+  private readonly settings: ConfigShape
   private readonly states = new WeakMap<Agent, AgentState>()
   private readonly prompts = new Map<Agent, { dispose(): Promise<void> }>()
+
+  /**
+   * Whether the `find_files` tool is registered, which is what decides if the
+   * model is told about it.
+   *
+   * A mutable flag rather than a constructor argument: the tool is registered by
+   * `apply` after this service exists, and the prompt text is resolved at
+   * assembly time, so flipping this afterwards is enough.
+   */
+  public searchPrompt = false
 
   /**
    * @param ctx - host Cordis context.
    * @param config - validated configuration with schema defaults applied.
    */
-  constructor(ctx: Context, config: Config) {
+  constructor(ctx: Context, config: ConfigShape) {
     super(ctx)
     this.settings = config
-    this.excluded = new Set(config.excludedDirectories.map((entry) => entry.toLowerCase()))
 
-    if (config.installPrompt) {
-      for (const agent of ctx.agents.list()) this.installPrompt(agent)
-      ctx.on('agent/created', ((event: { agent: Agent }) => {
-        this.installPrompt(event.agent)
-      }) as never)
-      ctx.on('agent/disposed', ((event: { agent: Agent }) => {
-        const fiber = this.prompts.get(event.agent)
-        if (fiber === undefined) return
-        this.prompts.delete(event.agent)
-        void fiber.dispose()
-      }) as never)
-    }
+    // Wiring is unconditional even when `installPrompt` is off: each section
+    // decides its own text at assembly time, and the `find_files` guidance is not
+    // optional — a user who turned off the `@path` section must still get a model
+    // that knows the tool exists.
+    for (const agent of ctx.agents.list()) this.installPrompt(agent)
+    ctx.on('agent/created', ((event: { agent: Agent }) => {
+      this.installPrompt(event.agent)
+    }) as never)
+    ctx.on('agent/disposed', ((event: { agent: Agent }) => {
+      const fiber = this.prompts.get(event.agent)
+      if (fiber === undefined) return
+      this.prompts.delete(event.agent)
+      void fiber.dispose()
+    }) as never)
 
     ctx.effect(
       () => async () => {
@@ -194,6 +183,30 @@ export class EverythingFileReferenceService extends FileReferenceService {
       },
       'dsh-at-file-everything: prompt fibers',
     )
+  }
+
+  /**
+   * Read one configuration field as it stands now.
+   *
+   * A `volatile` field reaches the plugin as a live handle (an object with
+   * `.get()`) rather than a value, which is exactly what lets a card edit apply
+   * without remounting. A plain value — which is what a direct `apply()` call and
+   * an older Loader hand over — is returned as-is.
+   *
+   * Public because the tool needs the same live reads as the provider: both must
+   * see an edited configuration without a remount.
+   *
+   * @param key - the Config field name.
+   * @returns the value currently in effect.
+   */
+  live<K extends keyof ConfigShape>(key: K): ConfigShape[K] {
+    const value = currentValue(this.settings[key])
+    return (value === undefined ? DEFAULT_CONFIG[key] : value) as ConfigShape[K]
+  }
+
+  /** The directories dropped from returned rows, lower-cased for comparison. */
+  private excludedSet(): Set<string> {
+    return new Set(this.live('excludedDirectories').map((entry) => entry.toLowerCase()))
   }
 
   /**
@@ -236,9 +249,19 @@ export class EverythingFileReferenceService extends FileReferenceService {
     if (signal.aborted) return undefined
     const existing = this.states.get(agent)
     if (existing !== undefined && existing.cwd === cwd) return existing
+    const candidates = resolveEsCommands(this.live('esCommand'), this.live('extraPathDirectories'))
+    if (candidates.length === 0) {
+      this.ctx.logger?.warn?.(
+        'dsh-at-file-everything: no es.exe found (checked the configured path, PATH, and the bundled copy)',
+      )
+    }
     const state: AgentState = {
       cwd,
-      client: new EsClient(this.settings.esCommand, this.settings.timeoutMs, this.settings.extraPathDirectories),
+      client: new EsClient(candidates.map((candidate) => candidate.path), {
+        timeoutMs: this.live('timeoutMs'),
+        deadlineMs: this.live('deadlineMs'),
+        extraPathDirectories: this.live('extraPathDirectories'),
+      }),
     }
     this.states.set(agent, state)
     return state
@@ -251,8 +274,9 @@ export class EverythingFileReferenceService extends FileReferenceService {
     fragment: string,
     signal: AbortSignal,
   ): Promise<Candidate[]> {
+    const excluded = this.excludedSet()
     const segments = directory.split('/').filter(Boolean)
-    if (segments.some((segment) => this.excluded.has(segment.toLowerCase()))) return []
+    if (segments.some((segment) => excluded.has(segment.toLowerCase()))) return []
 
     // Refuse a path that leaves the workspace. `@../other/` would otherwise be
     // joined onto the root and handed to Everything, turning completion into a
@@ -261,8 +285,13 @@ export class EverythingFileReferenceService extends FileReferenceService {
     const absolute = toWindowsPath(state.cwd, segments)
     if (!isWithin(state.cwd, absolute)) return []
 
+    // The fragment goes to Everything as a term rather than being applied to the
+    // returned page. `-n` caps the rows that come back, so filtering afterwards
+    // would silently drop every entry whose name sorts past the cap: a directory
+    // holding 4 724 children answers nothing for a name near the end of the
+    // alphabet — the same class of failure this provider exists to remove.
     const found = await state.client.query(
-      ['-parent', absolute, '-n', String(this.settings.maxCandidates)],
+      ['-parent', absolute, '-n', String(this.live('maxCandidates')), listingTerm(fragment)],
       signal,
     )
     if (!Array.isArray(found)) {
@@ -277,14 +306,14 @@ export class EverythingFileReferenceService extends FileReferenceService {
       // Match the shipped provider: dot-entries appear only once the user has
       // typed a leading dot for them.
       if (entryName.startsWith('.') && !fragment.startsWith('.')) continue
-      if (row.directory && this.excluded.has(entryName.toLowerCase())) continue
+      if (row.directory && excluded.has(entryName.toLowerCase())) continue
       rows.push({
         path: `${directory}${entryName}`,
         name: entryName,
         kind: row.directory ? 'directory' : 'file',
       })
     }
-    return rank(rows, directory + fragment, this.settings.maxResults)
+    return rank(rows, directory + fragment, this.live('maxResults'))
   }
 
   /**
@@ -298,7 +327,14 @@ export class EverythingFileReferenceService extends FileReferenceService {
    * cost ~800 ms to rediscover the same hidden files.
    */
   private async listWorkspace(state: AgentState, query: string, signal: AbortSignal): Promise<Candidate[]> {
-    const scope = ['-path', state.cwd, '-n', String(this.settings.maxCandidates)]
+    const scope = [
+      '-path',
+      state.cwd,
+      '-n',
+      String(this.live('maxCandidates')),
+      ...folderExclusionTerms(this.live('excludeInQuery')),
+      ...fileExclusionTerms(this.live('excludeFilePatterns')),
+    ]
 
     const found = await state.client.query([...scope, contiguousTerm(query)], signal)
     if (!Array.isArray(found)) {
@@ -307,7 +343,7 @@ export class EverythingFileReferenceService extends FileReferenceService {
     }
     let rows = this.toRawCandidates(state.cwd, found, query)
 
-    if (found.length === 0 && this.settings.fuzzyFallback && !signal.aborted) {
+    if (found.length === 0 && this.live('fuzzyFallback') && !signal.aborted) {
       const fuzzy = await state.client.query([...scope, subsequenceTerm(query)], signal)
       if (!Array.isArray(fuzzy)) {
         this.report(fuzzy)
@@ -316,7 +352,7 @@ export class EverythingFileReferenceService extends FileReferenceService {
       rows = this.toRawCandidates(state.cwd, fuzzy, query)
     }
 
-    return rank(filterExcluded(rows, this.excluded), query, this.settings.maxResults)
+    return rank(filterExcluded(rows, this.excludedSet()), query, this.live('maxResults'))
   }
 
   /** Convert Everything rows into root-relative candidates. */
@@ -334,16 +370,41 @@ export class EverythingFileReferenceService extends FileReferenceService {
     return rows
   }
 
-  /** Log a search-backend failure that degraded to an empty answer. */
+  /**
+   * Log a search-backend failure that degraded to an empty answer.
+   *
+   * "Everything is not running" is called out separately because it is the one
+   * cause an empty `@` list misrepresents: the index is complete, nothing is
+   * answering it, and the fix is to launch a program. Every other reason is a
+   * genuine inability to search.
+   */
   private report(failure: EsFailure): void {
     if (failure.reason === 'aborted') return
+    if (failure.reason === 'everything-not-running') {
+      this.ctx.logger?.warn?.(
+        'dsh-at-file-everything: Everything is not running, so @path cannot list anything; start Everything and reopen the composer',
+      )
+      return
+    }
     this.ctx.logger?.warn?.(`dsh-at-file-everything: ${failure.reason}: ${failure.detail}`)
   }
 
   /**
-   * Contribute the seam's `@path` guidance to one agent while it can call
-   * `read`, mirroring the shipped provider's behaviour.
-   * @param agent - agent to install the prompt section for.
+   * Contribute the prompt sections this plugin owns to one agent.
+   *
+   * Two sections, with deliberately different gates:
+   *
+   * - `context:file-reference` is the seam's stable `@path` guidance, offered
+   *   only while the agent can call `read`, and only while `installPrompt` is on.
+   * - `context:file-search` teaches the model when to use `find_files`. It is on
+   *   whenever the tool is registered, with no configuration of its own: the whole
+   *   point is that a user does not have to know the tool exists for the model to
+   *   find it.
+   *
+   * Each text is resolved at assembly time rather than at install time, so a card
+   * edit (or the tool appearing later) takes effect without reinstalling.
+   *
+   * @param agent - agent to install the prompt sections for.
    */
   private installPrompt(agent: Agent): void {
     if (this.prompts.has(agent)) return
@@ -351,7 +412,18 @@ export class EverythingFileReferenceService extends FileReferenceService {
       scope.systemPrompt.section({
         name: 'context:file-reference',
         order: scope.systemPrompt.getSectionOrder('FILE_REFERENCE'),
-        text: () => (scope.tools.get('read', agent) === undefined ? '' : FILE_REFERENCE_PROMPT),
+        text: () => (
+          this.live('installPrompt') && scope.tools.get('read', agent) !== undefined
+            ? FILE_REFERENCE_PROMPT
+            : ''
+        ),
+      })
+      scope.systemPrompt.section({
+        name: 'context:file-search',
+        // Placed immediately before the `glob` guidance, so the model reads
+        // "where to look for a file" and "how to enumerate paths" as one decision.
+        order: scope.systemPrompt.getSectionOrder('TOOL_GLOB') - 1,
+        text: () => (this.searchPrompt ? FILE_SEARCH_PROMPT : ''),
       })
     })
     this.prompts.set(agent, fiber)
@@ -359,50 +431,131 @@ export class EverythingFileReferenceService extends FileReferenceService {
 }
 
 /**
- * Install the Everything-backed file-reference provider.
+ * Install the Everything-backed file-reference provider and the `find_files` tool.
+ *
+ * Two capabilities from one index, for two different callers: the provider answers
+ * a human typing `@` in the composer, and the tool answers the model, which
+ * resolves paths itself. The tool is registered only where a `tools` service
+ * exists, so a composition without one still gets `@` completion.
  *
  * @param ctx - host Cordis context.
  * @param config - validated configuration with schema defaults applied.
  */
-export function apply(ctx: Context, config: Config = Config({})): void {
-  new EverythingFileReferenceService(ctx, normalizeConfig(config))
+export function apply(ctx: Context, config: ConfigShape = Config({})): void {
+  const settings = normalizeConfig(config)
+  const service = new EverythingFileReferenceService(ctx, settings)
   ctx.logger?.info?.('dsh-at-file-everything: answering @file from the Everything index')
+
+  // Claim this instance's configuration page.
+  //
+  // Without this the Host keeps `autoGenerate: true` for our namespace and renders
+  // a generic form built from the Config schema; the card the browser half
+  // registers is then never shown, and because the schema holds only volatile
+  // fields that generic form has nothing useful to draw. `configure` is the
+  // documented way for a plugin to say "I own my page", and every first-party
+  // plugin with a custom page calls exactly this line.
+  ctx.inject?.(['settings'], (scope) => {
+    scope.effect(
+      () => scope.settings?.configure({ auto: false }, ctx.fiber) ?? (() => {}),
+      'dsh-at-file-everything: own the configuration page',
+    )
+  })
+
+  // The card's status route.
+  //
+  // Gated on `inject`, not probed once: the Web server may be provided after this
+  // plugin loads, and a one-shot `ctx.get` would then miss it forever, leaving the
+  // card unable to say which es.exe is in effect.
+  ctx.inject?.(['webServer'], (scope) => {
+    installStatusRoute(scope, () => service.live('esCommand'), () => service.live('extraPathDirectories'))
+  })
+
+  // `tools` is optional: a library or headless composition may register none, and
+  // the Web one provides it on its own schedule. `inject` retries when the service
+  // appears, which is what makes the tool registration self-healing rather than a
+  // single attempt at load time.
+  ctx.inject?.(['tools'], (scope) => {
+    // Reading the configuration through the service keeps one source of truth, so
+    // a card edit reaches the tool as well as `@`.
+    const tool = buildFindFilesTool(
+      makeFindFilesHost({
+        esCommand: () => service.live('esCommand'),
+        extraPathDirectories: () => service.live('extraPathDirectories'),
+        timeoutMs: () => service.live('timeoutMs'),
+        deadlineMs: () => service.live('deadlineMs'),
+        exclusions: () => [
+          ...folderExclusionTerms(service.live('excludeInQuery')),
+          ...fileExclusionTerms(service.live('excludeFilePatterns')),
+        ],
+      }),
+    )
+    scope.tools?.register(tool)
+    // Only now is the guidance true: telling the model to call a tool that was
+    // never registered would make it try and fail on every file search.
+    service.searchPrompt = true
+  })
 }
 
 /**
- * Validate configuration the Loader may have handed through unvalidated.
- * @param config - raw configuration.
- * @returns a complete, validated configuration.
+ * Register the card's `es.exe` status route on an already-gated Web server scope.
+ *
+ * The handler always answers JSON, including when resolution fails, so the card can
+ * tell "the Host could not look" from "nothing was found" — they need different
+ * messages and only one of them means the user has to install anything.
+ *
+ * @param scope - a scope that requires `webServer`.
+ * @param esCommand - reads the configured command.
+ * @param extraPathDirectories - reads the extra directories searched before `PATH`.
  */
-export function normalizeConfig(config: Config): Config {
-  const maxResults = config.maxResults ?? 20
-  const maxCandidates = config.maxCandidates ?? 300
-  const timeoutMs = config.timeoutMs ?? 3000
-  if (!Number.isSafeInteger(maxResults) || maxResults <= 0) {
-    throw new Error('dsh-at-file-everything: maxResults must be a positive safe integer')
-  }
-  if (!Number.isSafeInteger(maxCandidates) || maxCandidates <= 0) {
-    throw new Error('dsh-at-file-everything: maxCandidates must be a positive safe integer')
-  }
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
-    throw new Error('dsh-at-file-everything: timeoutMs must be a positive safe integer')
-  }
-  const excludedDirectories = config.excludedDirectories ?? DEFAULT_EXCLUDED_DIRECTORIES
-  if (excludedDirectories.some((entry) => entry === '' || entry.includes('/') || entry.includes('\\'))) {
-    throw new Error('dsh-at-file-everything: excludedDirectories entries must be non-empty directory basenames')
-  }
-  const esCommand = config.esCommand ?? 'es.exe'
-  if (esCommand.trim() === '') throw new Error('dsh-at-file-everything: esCommand must not be empty')
-  return {
-    esCommand,
-    maxResults,
-    maxCandidates,
-    timeoutMs,
-    excludedDirectories: [...excludedDirectories],
-    fuzzyFallback: config.fuzzyFallback ?? true,
-    extraPathDirectories: [...(config.extraPathDirectories ?? [])],
-    installPrompt: config.installPrompt ?? true,
-  }
+function installStatusRoute(
+  scope: Context,
+  esCommand: () => string,
+  extraPathDirectories: () => string[],
+): void {
+  const web = scope.webServer
+  if (!isWebServer(web)) return
+  scope.effect(
+    () =>
+      web.register({
+        kind: 'exact',
+        path: STATUS_ROUTE,
+        // Async on purpose: the answer includes the client's own version, which
+        // needs one short child process. `-version` does not need the Everything
+        // service, so this still answers while the index is unavailable.
+        handler: async (_req: unknown, res: {
+          writeHead(status: number, headers: Record<string, string>): void
+          end(body: string): void
+        }) => {
+          try {
+            const status = esStatus(esCommand(), extraPathDirectories())
+            const version = status.effective === undefined ? undefined : await esVersion(status.effective)
+            const body = statusBody(version === undefined ? status : { ...status, version })
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
+            res.end(body)
+          } catch (error) {
+            // A failed resolution is still an answer the card must render.
+            res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' })
+            res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }))
+          }
+        },
+      }),
+    'dsh-at-file-everything: es.exe status route',
+  )
+}
+
+/**
+ * Narrow a probed service to the one route-registering method used here.
+ * @param value - whatever `ctx.get('webServer')` answered.
+ * @returns whether it can accept a route.
+ */
+function isWebServer(value: unknown): value is {
+  register(route: { kind: 'exact'; path: string; handler: (req: unknown, res: never) => void }): unknown
+} {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    typeof (value as { register?: unknown }).register === 'function'
+  )
 }
 
 /**

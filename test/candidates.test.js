@@ -142,6 +142,53 @@ describe('filterExcluded', () => {
     const rows = [row('node_modules/pkg/i.js')]
     assert.deepEqual(filterExcluded(rows, new Set()), rows)
   })
+
+  it('honours a wildcard pattern, which is what the card asks the user to type', () => {
+    // The card accepts `Lib*`; without wildcard matching here the entry would
+    // look configured but do nothing. `Lib*` is a prefix, so it takes both.
+    const rows = [
+      row('Library/pkg/i.js'),
+      row('LibraryBeta/b.js'),
+      row('Assets/keep.cs'),
+    ]
+    assert.deepEqual(
+      filterExcluded(rows, new Set(['lib*'])).map((entry) => entry.path),
+      ['Assets/keep.cs'],
+    )
+  })
+
+  it('narrows with ? where * would be too wide', () => {
+    const rows = [row('Library/i.js'), row('LibraryBeta/b.js')]
+    assert.deepEqual(
+      filterExcluded(rows, new Set(['library'])).map((entry) => entry.path),
+      ['LibraryBeta/b.js'],
+    )
+  })
+
+  it('matches ? as one character', () => {
+    const rows = [row('Temp1/a.txt'), row('Temp12/a.txt')]
+    assert.deepEqual(
+      filterExcluded(rows, new Set(['temp?'])).map((entry) => entry.path),
+      ['Temp12/a.txt'],
+    )
+  })
+
+  it('treats regex metacharacters in a pattern as literals', () => {
+    // A folder really can be named `a+b`; matching it must not also match `aab`.
+    const rows = [row('a+b/x.txt'), row('aab/x.txt')]
+    assert.deepEqual(
+      filterExcluded(rows, new Set(['a+b'])).map((entry) => entry.path),
+      ['aab/x.txt'],
+    )
+  })
+
+  it('anchors the pattern, so a prefix does not exclude a longer name', () => {
+    const rows = [row('build/x.js'), row('buildtools/y.js')]
+    assert.deepEqual(
+      filterExcluded(rows, new Set(['build'])).map((entry) => entry.path),
+      ['buildtools/y.js'],
+    )
+  })
 })
 
 describe('rank', () => {
